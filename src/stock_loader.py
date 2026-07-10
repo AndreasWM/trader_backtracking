@@ -10,9 +10,9 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from lib.ibkr_market_order import MarketOrder
-from lib.tv_scanner import TV_Scanner
-from lib.stock_util import StockUtil
+from trader_lib.ibkr_market_order import MarketOrder
+from trader_lib.tv_scanner import TV_Scanner
+from trader_lib.stock_util import StockUtil
 
 # ── Verbindungsparameter ────────────────────────────────────────────────────────
 DB_USER     = "TRADER"
@@ -75,7 +75,7 @@ class StockLoader:
         return pd.concat(all_data, axis=1)
 
     def load_symbols(self) -> list[str]:
-        symbols = self._sc.query_us_symbols(
+        symbols = self._sc.query_us(
             tickers_to_exclude=self._unwanted_tickers,
             market_cap=10_000_000_000,
             length=MAX_STOCKS

@@ -80,3 +80,13 @@ select calendar_year, calendar_month, symbol, quantity, quantity * price as tota
   from quantity_to_buy
 order by calendar_year, calendar_month, symbol
 ;
+
+create or replace view vw_market_day as
+SELECT ROW_NUMBER() OVER (ORDER BY price_date) AS market_day_no,
+       price_date market_date
+FROM (
+    SELECT DISTINCT price_date
+    FROM stock_prices
+)
+ORDER BY price_date
+;

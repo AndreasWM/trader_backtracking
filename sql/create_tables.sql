@@ -43,3 +43,10 @@ CREATE TABLE account (
 SET DEFINE OFF;
 Insert into "ACCOUNT" (ACCOUNT_DATE,BALANCE) values (to_date('01.01.26','DD.MM.RR'),'10000,0');
 commit;
+
+drop table market_calendar purge;
+CREATE TABLE market_calendar (
+    market_day_no NUMBER(10) CONSTRAINT pk_market_calendar PRIMARY KEY,
+    market_date   DATE NOT NULL,
+    CONSTRAINT uk_market_calendar_date UNIQUE (market_date)
+);
