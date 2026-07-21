@@ -3,6 +3,8 @@ CREATE TABLE stock_prices (
     symbol      VARCHAR2(20)        NOT NULL,
     price_date  DATE                NOT NULL,
     price       BINARY_DOUBLE,
+    high        BINARY_DOUBLE,
+    low         BINARY_DOUBLE,
     market_cap  BINARY_DOUBLE,
     calendar_day NUMBER GENERATED ALWAYS AS (EXTRACT(DAY FROM price_date)) VIRTUAL,
     iso_year  NUMBER GENERATED ALWAYS AS (TO_NUMBER(TO_CHAR(price_date, 'IYYY'))) VIRTUAL,

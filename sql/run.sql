@@ -8,7 +8,7 @@ INSERT INTO "TRADER"."ACCOUNT" (BALANCE) VALUES ('10000')
 ;
 commit
 ;
---insert into table market_calendar;
+
 select * from STOCK_PRICES
  order by PRICE_DATE
 ;

@@ -10,9 +10,8 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from trader_lib.ibkr_market_order import MarketOrder
-from trader_lib.tv_scanner import TV_Scanner
-from trader_lib.stock_util import StockUtil
+from lib.tv_scanner import TV_Scanner
+from lib.stock_util import StockUtil
 
 # ── Verbindungsparameter ────────────────────────────────────────────────────────
 DB_USER     = "TRADER"
@@ -32,7 +31,9 @@ class StockLoader:
     def __init__(self):
         self._util = StockUtil()
         self._sc   = TV_Scanner()
-        red_list = self._util.read_symbols(self._util.get_latest_watchlist_file(self._util.get_data_dir_linux()))
+        # red_list = self._util.read_symbols(self._util.get_latest_watchlist_file(self._util.get_data_dir_linux()))
+        red_list = self._unwanted_tickers = self._util.read_symbols(self._util.get_latest_do_not_trade_file())
+
         other_unwanted_stocks = ["SNDK"]
         self._unwanted_tickers = red_list #+ other_unwanted_stocks
         self._pool: oracledb.ConnectionPool | None = None
@@ -78,7 +79,8 @@ class StockLoader:
         symbols = self._sc.query_us(
             tickers_to_exclude=self._unwanted_tickers,
             market_cap=10_000_000_000,
-            length=MAX_STOCKS
+            length=MAX_STOCKS,
+            capital_per_stock=1000
         )
         symbols = [s.replace(".", "-") for s in symbols if "/" not in s]
         return symbols
@@ -179,96 +181,80 @@ class StockLoader:
         ]
 
     def save_to_oracle(
-        self,
-        long_df: pd.DataFrame,
-        table_name: str = "stock_prices",
-        truncate_first: bool = False,
-    ) -> None:
-        """
-        Schreibt Millionen von Zeilen effizient per Bulk-Insert in Oracle.
+            self,
+            long_df: pd.DataFrame,
+            table_name: str = "stock_prices",
+            truncate_first: bool = False,
+        ) -> None:
+            """
+            Schreibt Millionen von Zeilen effizient per Bulk-Insert in Oracle.
 
-        Strategie:
-        - oracledb native (kein SQLAlchemy-Overhead)
-        - executemany() mit vorbereiteten Tupeln (CHUNK_SIZE Zeilen pro Aufruf)
-        - Commit alle COMMIT_EVERY Zeilen (kein riesiges Undo-Segment)
-        - setinputsizes() für maximale Bind-Performance
-        - Optional: TRUNCATE vor dem Insert (schneller als DELETE)
-        """
-        if long_df.empty:
-            print("⚠️  Keine Daten zum Speichern.")
-            return
+            Strategie:
+            - oracledb native (kein SQLAlchemy-Overhead)
+            - executemany() mit vorbereiteten Tupeln (CHUNK_SIZE Zeilen pro Aufruf)
+            - Commit alle COMMIT_EVERY Zeilen (kein riesiges Undo-Segment)
+            - setinputsizes() für maximale Bind-Performance
+            - Optional: TRUNCATE vor dem Insert (schneller als DELETE)
+            """
+            if long_df.empty:
+                print("⚠️  Keine Daten zum Speichern.")
+                return
 
-        total = len(long_df)
-        print(f"💾 Schreibe {total:,} Zeilen in Tabelle '{table_name}' …")
+            total = len(long_df)
+            print(f"💾 Schreibe {total:,} Zeilen in Tabelle '{table_name}' …")
 
-        rows = self._prepare_rows(long_df)
-        sql  = (
-            f"INSERT INTO {table_name} "
-            f"(symbol, price_date, price, market_cap) "
-            f"VALUES (:1, :2, :3, :4)"
-        )
-
-        pool = self._get_pool()
-        with pool.acquire() as conn:
-            conn.autocommit = False
-            cursor = conn.cursor()
-
-            # Bind-Typen einmalig deklarieren → weniger Overhead pro Zeile
-            cursor.setinputsizes(
-                oracledb.DB_TYPE_VARCHAR,            # symbol
-                oracledb.DB_TYPE_DATE,               # price_date
-                oracledb.DB_TYPE_BINARY_DOUBLE,      # price
-                oracledb.DB_TYPE_BINARY_DOUBLE,      # market_cap (NULL-fähig)
+            rows = self._prepare_rows(long_df)
+            sql  = (
+                f"INSERT INTO {table_name} "
+                f"(symbol, price_date, price, market_cap) "
+                f"VALUES (:1, :2, :3, :4)"
             )
 
-            if truncate_first:
-                cursor.execute(f"TRUNCATE TABLE {table_name}")
-                print(f"  🗑️  Tabelle '{table_name}' geleert.")
+            pool = self._get_pool()
+            with pool.acquire() as conn:
+                conn.autocommit = False
 
-            inserted  = 0
-            committed = 0
+                # TRUNCATE auf einem eigenen Cursor ausführen – dieser Cursor
+                # bekommt NIE setinputsizes(), da TRUNCATE keine Bind-Variablen hat.
+                if truncate_first:
+                    with conn.cursor() as ddl_cursor:
+                        ddl_cursor.execute(f"TRUNCATE TABLE {table_name}")
+                    print(f"  🗑️  Tabelle '{table_name}' geleert.")
 
-            for chunk in self._iter_chunks(rows, CHUNK_SIZE):
-                cursor.executemany(sql, chunk, batcherrors=True)
+                # Eigener Cursor nur für die parametrisierten Inserts
+                cursor = conn.cursor()
 
-                # Fehlerhafte Einzelzeilen protokollieren, aber weiterlaufen
-                for err in cursor.getbatcherrors():
-                    print(f"  ⚠️  Zeile {err.offset}: {err.message}")
+                # Bind-Typen einmalig deklarieren → weniger Overhead pro Zeile
+                cursor.setinputsizes(
+                    oracledb.DB_TYPE_VARCHAR,            # symbol
+                    oracledb.DB_TYPE_DATE,               # price_date
+                    oracledb.DB_TYPE_BINARY_DOUBLE,      # price
+                    oracledb.DB_TYPE_BINARY_DOUBLE,      # market_cap (NULL-fähig)
+                )
 
-                inserted += len(chunk)
+                inserted  = 0
+                committed = 0
 
-                # Commit in definierten Intervallen
-                if inserted - committed >= COMMIT_EVERY:
-                    conn.commit()
-                    committed = inserted
-                    pct = inserted / total * 100
-                    print(f"  ✔  {inserted:>10,} / {total:,} Zeilen committed ({pct:.1f} %)")
+                for chunk in self._iter_chunks(rows, CHUNK_SIZE):
+                    cursor.executemany(sql, chunk, batcherrors=True)
 
-            conn.commit()   # Rest-Zeilen committen
-            cursor.close()
+                    # Fehlerhafte Einzelzeilen protokollieren, aber weiterlaufen
+                    for err in cursor.getbatcherrors():
+                        print(f"  ⚠️  Zeile {err.offset}: {err.message}")
 
-        print(f"✅ Fertig – {inserted:,} Zeilen erfolgreich in '{table_name}' geschrieben.")
+                    inserted += len(chunk)
 
+                    # Commit in definierten Intervallen
+                    if inserted - committed >= COMMIT_EVERY:
+                        conn.commit()
+                        committed = inserted
+                        pct = inserted / total * 100
+                        print(f"  ✔  {inserted:>10,} / {total:,} Zeilen committed ({pct:.1f} %)")
 
-# ── DDL (zur Referenz) ──────────────────────────────────────────────────────────
-CREATE_TABLE_SQL = """
-CREATE TABLE stock_prices (
-    symbol      VARCHAR2(20)   NOT NULL,
-    price_date  DATE           NOT NULL,
-    price       BINARY_DOUBLE,
-    market_cap  BINARY_DOUBLE,           -- historisch: price × aktuelle Stückanzahl
-    CONSTRAINT pk_stock_prices PRIMARY KEY (symbol, price_date)
-);
+                conn.commit()   # Rest-Zeilen committen
+                cursor.close()
 
--- Optional: Index für Datumsabfragen
-CREATE INDEX ix_stock_prices_date ON stock_prices (price_date);
-
--- Optional: existierende Tabelle um die Spalte erweitern
--- ALTER TABLE stock_prices ADD (market_cap BINARY_DOUBLE);
-"""
-
-
-# ── Main ────────────────────────────────────────────────────────────────────────
+            print(f"✅ Fertig – {inserted:,} Zeilen erfolgreich in '{table_name}' geschrieben.")
 
 def main():
     loader = StockLoader()
@@ -282,7 +268,7 @@ def main():
         loader.save_to_oracle(
             long_df,
             table_name="stock_prices",
-            truncate_first=False,   # True = Tabelle vorher leeren
+            truncate_first=True,
         )
     finally:
         loader.close_pool()
