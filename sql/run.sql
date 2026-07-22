@@ -12,9 +12,16 @@ commit
 select * from STOCK_PRICES
  order by PRICE_DATE
 ;
+truncate table market_calendar;
 INSERT INTO market_calendar (market_day_no, market_date)
 SELECT MARKET_DAY_NO, MARKET_DATE
   from VW_MARKET_DAY
 ;
 commit
+;
+
+drop table tmp_ichimoku;
+create table tmp_ichimoku as
+select SYMBOL, PRICE_DATE, PRICE, HIGH, LOW, TENKAN_SEN, KIJUN_SEN, SENKOU_SPAN_A, SENKOU_SPAN_B, CHIKOU_SPAN
+from VW_ICHIMOKU
 ;

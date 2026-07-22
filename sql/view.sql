@@ -90,3 +90,65 @@ FROM (
 )
 ORDER BY price_date
 ;
+
+create or replace view vw_ichimoku as
+WITH base AS (
+    SELECT
+        SYMBOL,
+        PRICE_DATE,
+        PRICE,
+        HIGH,
+        LOW,
+        -- Tenkan-sen (Conversion Line): (Hoch9 + Tief9) / 2
+        ( MAX(HIGH) OVER (PARTITION BY SYMBOL ORDER BY PRICE_DATE
+                          ROWS BETWEEN 8 PRECEDING AND CURRENT ROW)
+        + MIN(LOW)  OVER (PARTITION BY SYMBOL ORDER BY PRICE_DATE
+                          ROWS BETWEEN 8 PRECEDING AND CURRENT ROW)
+        ) / 2 AS TENKAN_SEN,
+
+        -- Kijun-sen (Base Line): (Hoch26 + Tief26) / 2
+        ( MAX(HIGH) OVER (PARTITION BY SYMBOL ORDER BY PRICE_DATE
+                          ROWS BETWEEN 25 PRECEDING AND CURRENT ROW)
+        + MIN(LOW)  OVER (PARTITION BY SYMBOL ORDER BY PRICE_DATE
+                          ROWS BETWEEN 25 PRECEDING AND CURRENT ROW)
+        ) / 2 AS KIJUN_SEN,
+
+        -- Rohwert für Senkou Span B: (Hoch52 + Tief52) / 2  (noch ohne Verschiebung)
+        ( MAX(HIGH) OVER (PARTITION BY SYMBOL ORDER BY PRICE_DATE
+                          ROWS BETWEEN 51 PRECEDING AND CURRENT ROW)
+        + MIN(LOW)  OVER (PARTITION BY SYMBOL ORDER BY PRICE_DATE
+                          ROWS BETWEEN 51 PRECEDING AND CURRENT ROW)
+        ) / 2 AS SENKOU_B_RAW
+    FROM STOCK_PRICES
+),
+calc AS (
+    SELECT
+        SYMBOL,
+        PRICE_DATE,
+        PRICE,
+        HIGH,
+        LOW,
+        TENKAN_SEN,
+        KIJUN_SEN,
+        -- Rohwert für Senkou Span A: (Tenkan + Kijun) / 2 (noch ohne Verschiebung)
+        (TENKAN_SEN + KIJUN_SEN) / 2 AS SENKOU_A_RAW,
+        SENKOU_B_RAW
+    FROM base
+)
+SELECT
+    SYMBOL,
+    PRICE_DATE,
+    PRICE,
+    HIGH,
+    LOW,
+    TENKAN_SEN,
+    KIJUN_SEN,
+    -- Senkou Span A/B werden 26 Perioden in die Zukunft geplottet
+    -- -> der an Tag T berechnete Wert erscheint am Chart bei Tag T+26
+    LAG(SENKOU_A_RAW, 26) OVER (PARTITION BY SYMBOL ORDER BY PRICE_DATE) AS SENKOU_SPAN_A,
+    LAG(SENKOU_B_RAW, 26) OVER (PARTITION BY SYMBOL ORDER BY PRICE_DATE) AS SENKOU_SPAN_B,
+    -- Chikou Span: aktueller Schlusskurs, 26 Perioden in die Vergangenheit geplottet
+    LEAD(PRICE, 26) OVER (PARTITION BY SYMBOL ORDER BY PRICE_DATE) AS CHIKOU_SPAN
+FROM calc
+ORDER BY SYMBOL, PRICE_DATE
+;

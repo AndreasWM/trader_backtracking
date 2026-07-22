@@ -52,3 +52,13 @@ CREATE TABLE market_calendar (
     market_date   DATE NOT NULL,
     CONSTRAINT uk_market_calendar_date UNIQUE (market_date)
 );
+
+CREATE TABLE market_calendar as
+SELECT ROW_NUMBER() OVER (ORDER BY price_date) AS market_day_no,
+       price_date market_date
+FROM (
+    SELECT DISTINCT price_date
+    FROM stock_prices
+)
+ORDER BY price_date
+;
