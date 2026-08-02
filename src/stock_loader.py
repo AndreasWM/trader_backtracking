@@ -26,6 +26,11 @@ POOL_MAX           = 5       # Maximale Verbindungen im Pool
 MAX_STOCKS         = 1000    # Max. Anzahl zu ladender Aktien (für Scanner-Query)
 MARKET_CAP_WORKERS = 20      # Parallele Threads für Aktienanzahl-Abruf
 
+# Ichimoku-Parameter (Standard-Perioden)
+ICHIMOKU_TENKAN_PERIOD   = 9    # Conversion Line
+ICHIMOKU_KIJUN_PERIOD    = 26   # Base Line
+ICHIMOKU_SENKOU_B_PERIOD = 52   # Senkou Span B
+
 
 class StockLoader:
     def __init__(self):
@@ -63,6 +68,10 @@ class StockLoader:
     def download_in_batches(
         self, tickers: list[str], batch_size: int = 200, **kwargs
     ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+        """
+        Lädt Close, High und Low. High/Low werden nur intern für die
+        Ichimoku-Berechnung benötigt und nicht in die DB geschrieben.
+        """
         close_data, high_data, low_data = [], [], []
         num_batches = (len(tickers) + batch_size - 1) // batch_size
         for i in range(0, len(tickers), batch_size):
@@ -88,7 +97,6 @@ class StockLoader:
             tickers_to_exclude=self._unwanted_tickers,
             market_cap=10_000_000_000,
             length=MAX_STOCKS,
-            capital_per_stock=1000
         )
         symbols = [s.replace(".", "-") for s in symbols if "/" not in s]
         return symbols
@@ -97,8 +105,10 @@ class StockLoader:
         self, symbols: list[str]
     ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict[str, float | None]]:
         """
-        Lädt Preise (Close/High/Low) und aktuelle Aktienanzahl parallel.
-        Die historische Market Cap wird später als price × shares berechnet.
+        Lädt Preise (Close/High/Low) und aktuelle Aktienanzahl parallel und
+        berechnet daraus die Ichimoku-Wolke (Span A / Span B).
+
+        Rückgabe: (close_prices, span_a, span_b, shares)
         """
         if not symbols:
             print("⚠️  Keine Symbole zum Laden")
@@ -124,26 +134,65 @@ class StockLoader:
 
         fetched = sum(1 for v in shares.values() if v is not None)
         print(f"✅ Preise geladen, Aktienanzahl: {fetched} vorhanden, {len(shares) - fetched} fehlend")
-        return close_prices, high_prices, low_prices, shares
+
+        span_a, span_b = self.calculate_ichimoku_spans(high_prices, low_prices)
+
+        return close_prices, span_a, span_b, shares
+
+    # ── Ichimoku-Berechnung ─────────────────────────────────────────────────────
+
+    def calculate_ichimoku_spans(
+        self, high: pd.DataFrame, low: pd.DataFrame
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """
+        Berechnet Senkou Span A und Senkou Span B der Ichimoku-Wolke.
+
+        Tenkan-sen (9)  = (Hoch_9  + Tief_9)  / 2
+        Kijun-sen  (26) = (Hoch_26 + Tief_26) / 2
+        Span A          = (Tenkan-sen + Kijun-sen) / 2
+        Span B     (52) = (Hoch_52 + Tief_52) / 2
+
+        rolling() arbeitet spaltenweise, d.h. jedes Symbol (Spalte) wird
+        unabhängig über sein eigenes Zeitfenster berechnet.
+
+        Hinweis: Kein klassischer 26-Perioden-Vorwärtsversatz – die Werte
+        sind auf das jeweilige price_date bezogen.
+        """
+        tenkan = (
+            high.rolling(ICHIMOKU_TENKAN_PERIOD).max()
+            + low.rolling(ICHIMOKU_TENKAN_PERIOD).min()
+        ) / 2
+        kijun = (
+            high.rolling(ICHIMOKU_KIJUN_PERIOD).max()
+            + low.rolling(ICHIMOKU_KIJUN_PERIOD).min()
+        ) / 2
+
+        span_a = (tenkan + kijun) / 2
+        span_b = (
+            high.rolling(ICHIMOKU_SENKOU_B_PERIOD).max()
+            + low.rolling(ICHIMOKU_SENKOU_B_PERIOD).min()
+        ) / 2
+
+        return span_a, span_b
 
     # ── Transformation ──────────────────────────────────────────────────────────
 
     def to_long_format(
         self,
         prices: pd.DataFrame,
-        high: pd.DataFrame,
-        low: pd.DataFrame,
+        span_a: pd.DataFrame,
+        span_b: pd.DataFrame,
         shares: dict[str, float | None] | None = None,
     ) -> pd.DataFrame:
         """
-        Wide → Long mit den Spalten symbol, price_date, price, high, low, market_cap.
+        Wide → Long mit den Spalten symbol, price_date, price, span_a, span_b, market_cap.
 
         market_cap wird als price × shares berechnet (Näherung: konstante
         Aktienanzahl über den gesamten Zeitraum).
         """
         if prices.empty:
             return pd.DataFrame(
-                columns=["symbol", "price_date", "price", "high", "low", "market_cap"]
+                columns=["symbol", "price_date", "price", "span_a", "span_b", "market_cap"]
             )
 
         def _melt(df: pd.DataFrame, value_name: str) -> pd.DataFrame:
@@ -155,14 +204,14 @@ class StockLoader:
                 .melt(id_vars="price_date", var_name="symbol", value_name=value_name)
             )
 
-        price_long = _melt(prices, "price")
-        high_long  = _melt(high, "high")
-        low_long   = _melt(low, "low")
+        price_long  = _melt(prices, "price")
+        span_a_long = _melt(span_a, "span_a")
+        span_b_long = _melt(span_b, "span_b")
 
         long_df = (
             price_long
-            .merge(high_long, on=["symbol", "price_date"], how="left")
-            .merge(low_long, on=["symbol", "price_date"], how="left")
+            .merge(span_a_long, on=["symbol", "price_date"], how="left")
+            .merge(span_b_long, on=["symbol", "price_date"], how="left")
             .dropna(subset=["price"])
             .sort_values(["symbol", "price_date"])
             .reset_index(drop=True)
@@ -175,7 +224,7 @@ class StockLoader:
         else:
             long_df["market_cap"] = None
 
-        return long_df[["symbol", "price_date", "price", "high", "low", "market_cap"]]
+        return long_df[["symbol", "price_date", "price", "span_a", "span_b", "market_cap"]]
 
     # ── Oracle Bulk-Insert ──────────────────────────────────────────────────────
 
@@ -192,19 +241,29 @@ class StockLoader:
     def _prepare_rows(self, long_df: pd.DataFrame) -> list[tuple]:
         """
         Konvertiert den DataFrame in eine Liste von
-        (symbol, price_date, price, high, low, market_cap)-Tupeln.
+        (symbol, price_date, price, span_a, span_b, market_cap)-Tupeln.
+
+        Bewusst spaltenweise (statt itertuples) implementiert: itertuples()
+        liefert dynamisch erzeugte NamedTuples, deren Feldtypen von
+        statischen Type-Checkern (Pyright/Pylance) nicht zuverlässig
+        aufgelöst werden können und zu falschen Attribut-Fehlern führen.
         """
-        return [
-            (
-                row.symbol,
-                row.price_date.date(),
-                pd.to_numeric(row.price, errors='coerce'),
-                pd.to_numeric(row.high, errors='coerce') if pd.notna(row.high) else None,
-                pd.to_numeric(row.low, errors='coerce') if pd.notna(row.low) else None,
-                float(row.market_cap) if pd.notna(row.market_cap) else None,
-            )
-            for row in long_df.itertuples(index=False)
-        ]
+        symbols     = long_df["symbol"].tolist()
+        price_dates = pd.to_datetime(long_df["price_date"]).dt.date.tolist()
+
+        prices  = pd.to_numeric(long_df["price"], errors="coerce")
+        span_a  = pd.to_numeric(long_df["span_a"], errors="coerce")
+        span_b  = pd.to_numeric(long_df["span_b"], errors="coerce")
+        mcaps   = pd.to_numeric(long_df["market_cap"], errors="coerce")
+
+        price_list      = [None if pd.isna(v) else float(v) for v in prices]
+        span_a_list     = [None if pd.isna(v) else float(v) for v in span_a]
+        span_b_list     = [None if pd.isna(v) else float(v) for v in span_b]
+        market_cap_list = [None if pd.isna(v) else float(v) for v in mcaps]
+
+        return list(
+            zip(symbols, price_dates, price_list, span_a_list, span_b_list, market_cap_list)
+        )
 
     def save_to_oracle(
         self,
@@ -232,7 +291,7 @@ class StockLoader:
         rows = self._prepare_rows(long_df)
         sql  = (
             f"INSERT INTO {table_name} "
-            f"(symbol, price_date, price, high, low, market_cap) "
+            f"(symbol, price_date, price, span_a, span_b, market_cap) "
             f"VALUES (:1, :2, :3, :4, :5, :6)"
         )
 
@@ -255,8 +314,8 @@ class StockLoader:
                 oracledb.DB_TYPE_VARCHAR,            # symbol
                 oracledb.DB_TYPE_DATE,               # price_date
                 oracledb.DB_TYPE_BINARY_DOUBLE,      # price
-                oracledb.DB_TYPE_BINARY_DOUBLE,      # high
-                oracledb.DB_TYPE_BINARY_DOUBLE,      # low
+                oracledb.DB_TYPE_BINARY_DOUBLE,      # span_a
+                oracledb.DB_TYPE_BINARY_DOUBLE,      # span_b
                 oracledb.DB_TYPE_BINARY_DOUBLE,      # market_cap (NULL-fähig)
             )
 
@@ -288,9 +347,9 @@ class StockLoader:
 def main():
     loader = StockLoader()
     try:
-        symbols                   = loader.load_symbols()
-        prices, high, low, shares = loader.load_prices_and_shares(symbols)
-        long_df                   = loader.to_long_format(prices, high, low, shares=shares)
+        symbols                        = loader.load_symbols()
+        prices, span_a, span_b, shares = loader.load_prices_and_shares(symbols)
+        long_df                        = loader.to_long_format(prices, span_a, span_b, shares=shares)
 
         print(f"\n📊 Tabelle: {len(long_df):,} Zeilen, {long_df['symbol'].nunique()} Symbole")
 

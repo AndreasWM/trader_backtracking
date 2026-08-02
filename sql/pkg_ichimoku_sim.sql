@@ -53,9 +53,27 @@ FROM perf;
 ------------------------------------------------------------------------------
 -- 2) TABELLEN fuer die Simulation
 ------------------------------------------------------------------------------
-DROP TABLE port_positions PURGE;
-DROP TABLE port_cash PURGE;
-DROP TABLE port_value_history PURGE;
+BEGIN
+    EXECUTE IMMEDIATE 'DROP TABLE port_positions PURGE';
+EXCEPTION
+    WHEN OTHERS THEN
+        IF SQLCODE != -942 THEN RAISE; END IF;  -- -942 = Tabelle existiert nicht -> ignorieren
+END;
+/
+BEGIN
+    EXECUTE IMMEDIATE 'DROP TABLE port_cash PURGE';
+EXCEPTION
+    WHEN OTHERS THEN
+        IF SQLCODE != -942 THEN RAISE; END IF;
+END;
+/
+BEGIN
+    EXECUTE IMMEDIATE 'DROP TABLE port_value_history PURGE';
+EXCEPTION
+    WHEN OTHERS THEN
+        IF SQLCODE != -942 THEN RAISE; END IF;
+END;
+/
 
 CREATE TABLE port_positions (
     position_id  NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,

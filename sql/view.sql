@@ -99,6 +99,7 @@ WITH base AS (
         PRICE,
         HIGH,
         LOW,
+        MARKET_CAP,
         -- Tenkan-sen (Conversion Line): (Hoch9 + Tief9) / 2
         ( MAX(HIGH) OVER (PARTITION BY SYMBOL ORDER BY PRICE_DATE
                           ROWS BETWEEN 8 PRECEDING AND CURRENT ROW)
@@ -128,6 +129,7 @@ calc AS (
         PRICE,
         HIGH,
         LOW,
+        MARKET_CAP,
         TENKAN_SEN,
         KIJUN_SEN,
         -- Rohwert für Senkou Span A: (Tenkan + Kijun) / 2 (noch ohne Verschiebung)
@@ -141,6 +143,7 @@ SELECT
     PRICE,
     HIGH,
     LOW,
+    MARKET_CAP,
     TENKAN_SEN,
     KIJUN_SEN,
     -- Senkou Span A/B werden 26 Perioden in die Zukunft geplottet

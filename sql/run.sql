@@ -22,6 +22,12 @@ commit
 
 drop table tmp_ichimoku;
 create table tmp_ichimoku as
-select SYMBOL, PRICE_DATE, PRICE, HIGH, LOW, TENKAN_SEN, KIJUN_SEN, SENKOU_SPAN_A, SENKOU_SPAN_B, CHIKOU_SPAN
+select SYMBOL, PRICE_DATE, PRICE, HIGH, LOW, market_cap, TENKAN_SEN, KIJUN_SEN, SENKOU_SPAN_A, SENKOU_SPAN_B, CHIKOU_SPAN
 from VW_ICHIMOKU
+;
+drop INDEX ix_tmp_ichimoku_sym_date;
+CREATE INDEX ix_tmp_ichimoku_sym_date
+  ON TMP_ICHIMOKU (PRICE_DATE, SYMBOL)
+;
+exec dbms_stats.gather_table_stats(user, 'TMP_ICHIMOKU', cascade => true)
 ;

@@ -14,23 +14,16 @@ class TV_Scanner:
     def always_true(self):
         return Column("exchange") != "INVALID"
 
-    def query_us(self, tickers_to_exclude: list[str], market_cap: int,
-                           length: int, capital_per_stock: float) -> list[str]:
-        cond_limit_size = Column('close') < capital_per_stock
+    def query_us(self, tickers_to_exclude: list[str], market_cap: int, length: int) -> list[str]:
         cond_stocktype = Column('type').isin(['stock','dr'])
         cond_subtype = Column('subtype') != 'preferred'
         cond_exchange = Column('exchange').isin(['NASDAQ', 'NYSE'])
         cond_market_cap = Column('market_cap_basic') > market_cap
-        cond_ichimoku1 = Column('close') > Column('Ichimoku.Lead1')
-        cond_ichimoku2 = Column('close') > Column('Ichimoku.Lead2')
         conditions = [
-            cond_limit_size,
             cond_stocktype,
             cond_subtype,
             cond_exchange,
             cond_market_cap,
-            cond_ichimoku1,
-            cond_ichimoku2,
         ]
         if tickers_to_exclude:
             conditions.append(Column('name').not_in(tickers_to_exclude))
@@ -43,8 +36,6 @@ class TV_Scanner:
                 'type',
                 'subtype',
                 'Perf.YTD',
-                'Ichimoku.Lead1',
-                'Ichimoku.Lead2',
                 'market_cap_basic',
             ) \
             .where(*conditions) \
@@ -57,7 +48,6 @@ class TV_Scanner:
         scanner_data = scanner_data.rename(columns={
             "name": "symbol",
             "close": "price",
-            "Recommend.All": "tech_rating",
         })
         
         # print(",".join(scanner_data.columns))

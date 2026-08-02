@@ -1,0 +1,63 @@
+with preise as (
+  select symbol, price_date datum, price preis, SENKOU_SPAN_A span_a, SENKOU_SPAN_B span_b
+    from tmp_ICHIMOKU
+  where symbol in ('AVGO')
+    and PRICE_DATE between to_date('2026.04.04','yyyy.mm.dd') and to_date('2026.04.10','yyyy.mm.dd')
+),
+vortag as (
+  select symbol, datum, preis, lag(preis) over (partition by symbol order by datum) preis_vortag, span_a, span_b
+    from preise
+),
+kaufen as (
+  select symbol, datum, preis, 'K' signal from vortag
+  where preis > span_a and preis > span_b and (preis_vortag <= span_a or preis_vortag <= span_b)
+),
+verkaufen as (
+  select symbol, datum, preis, 'V' signal from vortag
+  where preis < preis_vortag
+    and span_a between preis_vortag and preis or span_a between preis and preis_vortag
+),
+kaufen_verkaufen as (
+  select * from kaufen
+  union all
+  select * from verkaufen
+),
+streichen_vorbereiten as (
+  select symbol, datum, preis, signal,
+         lag(signal) over (partition by symbol order by datum) as signal_letztes
+   from kaufen_verkaufen
+),
+streichen as (
+  select symbol, datum, preis, signal, rownum zeile
+    from streichen_vorbereiten
+   where signal_letztes is null or signal <> signal_letztes
+),
+letzter_preis as (
+  select symbol, datum, preis, signal, zeile,
+         lag(preis) over (partition by symbol order by zeile) preis_letzter
+    from streichen
+),
+gewinn as (
+  select symbol, datum, preis, signal, 0 gewinn_prozent, 0 gewinn_faktor
+    from letzter_preis
+   where signal = 'K'
+  union all
+  select symbol, datum, preis, signal, (preis / preis_letzter - 1) * 100 gewinn_prozent, preis / preis_letzter gewinn_faktor
+    from letzter_preis
+   where signal = 'V'
+),
+gesamt_gewinn as (
+  select symbol, datum, preis, signal, gewinn_prozent, gewinn_faktor
+    from gewinn
+   where signal = 'K'
+  union all
+  select symbol, datum, preis, signal, gewinn_prozent, exp(sum(ln(gewinn_faktor)) over (partition by symbol order by datum)) as gewinn_faktor
+    from gewinn
+   where signal = 'V'
+)
+-- select * from kaufen
+select symbol, datum, preis, 'K' signal, preis_vortag, span_a, span_b
+  from vortag
+-- where preis > span_a and preis > span_b and (preis_vortag <= span_a or preis_vortag <= span_b)
+ order by symbol, datum
+;
