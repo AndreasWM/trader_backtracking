@@ -30,6 +30,7 @@ MARKET_CAP_WORKERS = 20      # Parallele Threads für Aktienanzahl-Abruf
 ICHIMOKU_TENKAN_PERIOD   = 9    # Conversion Line
 ICHIMOKU_KIJUN_PERIOD    = 26   # Base Line
 ICHIMOKU_SENKOU_B_PERIOD = 52   # Senkou Span B
+ICHIMOKU_DISPLACEMENT    = 26   # Vorwärtsversatz der Cloud (Standard: = Kijun-Periode)
 
 
 class StockLoader:
@@ -128,7 +129,12 @@ class StockLoader:
                 tickers=symbols,
                 batch_size=50,
                 period="3y",
-                auto_adjust=True,
+                # auto_adjust=False: liefert die tatsächlich gehandelten
+                # (nominalen) Kurse statt um Dividenden/Splits rückwirkend
+                # bereinigter Werte. Mit auto_adjust=True würde sich der
+                # historische Close mit jeder neuen Dividendenzahlung
+                # nachträglich leicht nach unten verschieben.
+                auto_adjust=False,
             )
             shares = dict(shares_future)
 
@@ -145,18 +151,23 @@ class StockLoader:
         self, high: pd.DataFrame, low: pd.DataFrame
     ) -> tuple[pd.DataFrame, pd.DataFrame]:
         """
-        Berechnet Senkou Span A und Senkou Span B der Ichimoku-Wolke.
+        Berechnet Senkou Span A und Senkou Span B der Ichimoku-Wolke,
+        inklusive des klassischen 26-Perioden-Vorwärtsversatzes (Displacement),
+        wie er auch bei TradingView Standard ist.
 
         Tenkan-sen (9)  = (Hoch_9  + Tief_9)  / 2
         Kijun-sen  (26) = (Hoch_26 + Tief_26) / 2
-        Span A          = (Tenkan-sen + Kijun-sen) / 2
-        Span B     (52) = (Hoch_52 + Tief_52) / 2
+        Span A (roh)    = (Tenkan-sen + Kijun-sen) / 2
+        Span B (roh, 52) = (Hoch_52 + Tief_52) / 2
 
-        rolling() arbeitet spaltenweise, d.h. jedes Symbol (Spalte) wird
-        unabhängig über sein eigenes Zeitfenster berechnet.
+        Displacement: der für Datum T angezeigte Cloud-Wert wird eigentlich
+        aus den Daten bis (T - 26 Handelstage) berechnet und 26 Perioden in
+        die Zukunft projiziert. Technisch heißt das: raw-Werte werden per
+        shift(26) um 26 Zeilen nach VORNE verschoben, sodass an Position T
+        der Wert steht, der ursprünglich aus den Daten von (T - 26) stammt.
 
-        Hinweis: Kein klassischer 26-Perioden-Vorwärtsversatz – die Werte
-        sind auf das jeweilige price_date bezogen.
+        rolling() und shift() arbeiten spaltenweise, d.h. jedes Symbol
+        (Spalte) wird unabhängig über sein eigenes Zeitfenster berechnet.
         """
         tenkan = (
             high.rolling(ICHIMOKU_TENKAN_PERIOD).max()
@@ -167,11 +178,24 @@ class StockLoader:
             + low.rolling(ICHIMOKU_KIJUN_PERIOD).min()
         ) / 2
 
-        span_a = (tenkan + kijun) / 2
-        span_b = (
+        raw_span_a = (tenkan + kijun) / 2
+        raw_span_b = (
             high.rolling(ICHIMOKU_SENKOU_B_PERIOD).max()
             + low.rolling(ICHIMOKU_SENKOU_B_PERIOD).min()
         ) / 2
+
+        # Vorwärtsversatz: Wert von (T - displacement) erscheint an Position T.
+        #
+        # Hinweis: TradingView (Pine Script) zählt Bars ab Index 0 und
+        # projiziert die Werte relativ dazu. Ein reiner positionaler
+        # shift(26) landet dadurch einen Handelstag zu spät gegenüber der
+        # TradingView-Darstellung. Empirisch abgeglichen (siehe AVGO
+        # 06.04.2026) muss der tatsächliche Zeilenversatz daher
+        # (ICHIMOKU_DISPLACEMENT - 1) betragen, um exakt mit TradingView
+        # übereinzustimmen.
+        effective_shift = ICHIMOKU_DISPLACEMENT - 1
+        span_a = raw_span_a.shift(effective_shift)
+        span_b = raw_span_b.shift(effective_shift)
 
         return span_a, span_b
 

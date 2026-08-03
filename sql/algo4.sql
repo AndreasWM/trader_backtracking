@@ -1,21 +1,22 @@
 with preise as (
-  select symbol, price_date datum, price preis, SENKOU_SPAN_A span_a, SENKOU_SPAN_B span_b
-    from tmp_ICHIMOKU
-  where symbol in ('AVGO')
-    and PRICE_DATE between to_date('2026.04.04','yyyy.mm.dd') and to_date('2026.04.10','yyyy.mm.dd')
+  select symbol, price_date datum, price preis, span_a, span_b
+    from STOCK_PRICES
+  where symbol in ('MU', 'SNDK')
+    and PRICE_DATE between to_date('2025.01.01','yyyy.mm.dd') and to_date('2026.07.31','yyyy.mm.dd')
 ),
 vortag as (
   select symbol, datum, preis, lag(preis) over (partition by symbol order by datum) preis_vortag, span_a, span_b
     from preise
 ),
 kaufen as (
-  select symbol, datum, preis, 'K' signal from vortag
-  where preis > span_a and preis > span_b and (preis_vortag <= span_a or preis_vortag <= span_b)
+  select symbol, datum, preis, 'K' signal
+    from vortag
+  where preis > span_a and preis > span_b
 ),
 verkaufen as (
-  select symbol, datum, preis, 'V' signal from vortag
-  where preis < preis_vortag
-    and span_a between preis_vortag and preis or span_a between preis and preis_vortag
+  select symbol, datum, preis, 'V' signal
+    from vortag
+  where preis < span_a or preis < span_b
 ),
 kaufen_verkaufen as (
   select * from kaufen
@@ -55,9 +56,13 @@ gesamt_gewinn as (
     from gewinn
    where signal = 'V'
 )
--- select * from kaufen
-select symbol, datum, preis, 'K' signal, preis_vortag, span_a, span_b
-  from vortag
--- where preis > span_a and preis > span_b and (preis_vortag <= span_a or preis_vortag <= span_b)
+select * from gesamt_gewinn
  order by symbol, datum
+;
+
+select symbol, datum, preis, market_cap, signal
+  from vw_signale
+ where datum between to_date('2026.01.01','yyyy.mm.dd') and to_date('2026.07.31','yyyy.mm.dd')
+  --  and symbol in ('SNDK')
+  order by symbol, datum
 ;
