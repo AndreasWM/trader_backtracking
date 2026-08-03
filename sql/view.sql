@@ -158,7 +158,7 @@ ORDER BY SYMBOL, PRICE_DATE
 
 create or replace view vw_signale as
 with prices as (
-  select symbol, PRICE_DATE datum, PRICE preis,
+  select /*+ materialize */ symbol, PRICE_DATE datum, PRICE preis,
          lag(price) over (partition by symbol order by price_date) preis_vortag,
          market_cap, span_a, span_b
     from STOCK_PRICES
@@ -188,22 +188,20 @@ kaufen as (
 verkaufen as (
   select symbol, datum, preis, market_cap, 'V' signal, span_a, span_b
     from prices
-  where preis < span_a or preis < span_b and (preis_vortag >= span_a and preis_vortag >= span_b)
+  where symbol in (select symbol from kaufen)
+    and preis between span_a and span_b or preis between span_b and span_a
 ),
 kaufen_verkaufen as (
   select * from kaufen
   union all
   select * from verkaufen
 ),
-streichen_vorbereiten as (
-  select symbol, datum, preis, market_cap,
-         signal, lag(signal) over (partition by symbol order by datum) as signal_letztes
-   from kaufen_verkaufen
-),
 streichen as (
   select symbol, datum, preis, market_cap, signal
-    from streichen_vorbereiten
-   where signal_letztes is null or signal <> signal_letztes
+    from (select symbol, datum, preis, market_cap, signal,
+                 lag(signal, 1, 'X') over (partition by symbol order by datum) as signal_letztes
+            from kaufen_verkaufen)
+   where signal <> signal_letztes
 )
 select symbol, datum, preis, market_cap, signal
   from streichen
