@@ -3,6 +3,8 @@ CREATE TABLE stock_prices (
     symbol      VARCHAR2(20)        NOT NULL,
     price_date  DATE                NOT NULL,
     price       BINARY_DOUBLE,
+    high        BINARY_DOUBLE,
+    low         BINARY_DOUBLE,
     span_a      BINARY_DOUBLE,
     span_b      BINARY_DOUBLE,
     market_cap  BINARY_DOUBLE,
@@ -22,9 +24,6 @@ CREATE TABLE stock_prices (
 --     calendar_year NUMBER GENERATED ALWAYS AS (EXTRACT(YEAR FROM price_date)) VIRTUAL,
 --     CONSTRAINT pk_stock_prices PRIMARY KEY (symbol, price_date)
 -- );
-drop table stock_prices_2 purge;
-CREATE TABLE stock_prices_2 as SELECT * from STOCK_PRICES
-;
 
 -- drop INDEX idx_stock_prices_year;
 -- CREATE INDEX idx_stock_prices_year 

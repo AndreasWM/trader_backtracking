@@ -19,6 +19,13 @@ SELECT MARKET_DAY_NO, MARKET_DATE
 ;
 commit
 ;
+drop table silvester;
+create table silvester as
+SELECT EXTRACT(YEAR FROM MARKET_DATE) AS JAHR,
+       MAX(MARKET_DATE)               AS LAST_TRADING_DAY
+FROM   TRADER.MARKET_CALENDAR
+GROUP  BY EXTRACT(YEAR FROM MARKET_DATE)
+ORDER  BY JAHR;
 
 drop table tmp_ichimoku;
 create table tmp_ichimoku as
@@ -29,5 +36,5 @@ drop INDEX ix_tmp_ichimoku_sym_date;
 CREATE INDEX ix_tmp_ichimoku_sym_date
   ON TMP_ICHIMOKU (PRICE_DATE, SYMBOL)
 ;
-exec dbms_stats.gather_table_stats(user, 'TMP_ICHIMOKU', cascade => true)
+exec dbms_stats.gather_table_stats(user, 'STOCK_PRICES', cascade => true)
 ;

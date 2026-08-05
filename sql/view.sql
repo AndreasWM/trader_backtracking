@@ -158,16 +158,18 @@ ORDER BY SYMBOL, PRICE_DATE
 
 create or replace view vw_signale as
 with prices as (
-  select /*+ materialize */ symbol, PRICE_DATE datum, PRICE preis,
-         lag(price) over (partition by symbol order by price_date) preis_vortag,
+  select /*+ materialize */ symbol, PRICE_DATE datum, PRICE preis, high, low,
+         lag(high) over (partition by symbol order by price_date) high_vortag,
+         lag(low) over (partition by symbol order by price_date) low_vortag,
          market_cap, span_a, span_b
     from STOCK_PRICES
 ),
 ytd as (
-  select p1.symbol, p1.datum, p1.preis, p1.preis_vortag, p1.market_cap, (p1.preis / p2.preis - 1) * 100 as ytd, p1.span_a, p1.span_b
+  select p1.symbol, p1.datum, p1.preis, p1.high, p1.high_vortag, p1.low, p1.low_vortag, p1.market_cap, (p1.preis / p2.preis - 1) * 100 as ytd, p1.span_a, p1.span_b
     from prices p1
+    join SILVESTER s on s.jahr = extract(year from p1.datum) - 1
     join prices p2 on p2.symbol = p1.symbol
-                  and p2.datum = TRUNC(p1.datum, 'YYYY') - 1
+                  and p2.datum = s.last_trading_day
    where p1.market_cap > 50000000000
 ),
 ranked as (
@@ -176,20 +178,20 @@ ranked as (
     from ytd
 ),
 top_shares as (
-  select symbol, datum, preis, preis_vortag, market_cap, ytd, span_a, span_b
+  select symbol, datum, preis, high, high_vortag, low, low_vortag, market_cap, ytd, span_a, span_b
     from ranked
-   where rn <= 40
+   where rn <= 50
 ),
 kaufen as (
   select symbol, datum, preis, market_cap, 'K' signal, span_a, span_b
     from top_shares
-  where preis > span_a and preis > span_b and (preis_vortag <= span_a or preis_vortag <= span_b)
+  where high > greatest(span_a, span_b) and high_vortag <= greatest(span_a, span_b)
 ),
 verkaufen as (
   select symbol, datum, preis, market_cap, 'V' signal, span_a, span_b
     from prices
   where symbol in (select symbol from kaufen)
-    and preis between span_a and span_b or preis between span_b and span_a
+    and low < greatest(span_a, span_b) and low_vortag >= greatest(span_a, span_b)
 ),
 kaufen_verkaufen as (
   select * from kaufen
