@@ -3,6 +3,7 @@ CREATE TABLE stock_prices (
     symbol      VARCHAR2(20)        NOT NULL,
     price_date  DATE                NOT NULL,
     price       BINARY_DOUBLE,
+    open        BINARY_DOUBLE,
     high        BINARY_DOUBLE,
     low         BINARY_DOUBLE,
     span_a      BINARY_DOUBLE,
@@ -76,7 +77,11 @@ FROM (
 ORDER BY price_date
 ;
 
-SELECT count(*) anz FROM stock_prices
-group by symbol
-order by anz
+drop table tmp_prices purge;
+CREATE TABLE tmp_prices as
+select * from vw_prices
+;
+drop table tmp_kaufen purge;
+CREATE TABLE tmp_kaufen as
+select * from vw_kaufen
 ;

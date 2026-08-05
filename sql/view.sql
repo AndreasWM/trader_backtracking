@@ -156,19 +156,21 @@ FROM calc
 ORDER BY SYMBOL, PRICE_DATE
 ;
 
-create or replace view vw_signale as
-with prices as (
-  select /*+ materialize */ symbol, PRICE_DATE datum, PRICE preis, high, low,
-         lag(high) over (partition by symbol order by price_date) high_vortag,
-         lag(low) over (partition by symbol order by price_date) low_vortag,
-         market_cap, span_a, span_b
-    from STOCK_PRICES
-),
-ytd as (
-  select p1.symbol, p1.datum, p1.preis, p1.high, p1.high_vortag, p1.low, p1.low_vortag, p1.market_cap, (p1.preis / p2.preis - 1) * 100 as ytd, p1.span_a, p1.span_b
-    from prices p1
+create or replace view vw_prices as
+select symbol, PRICE_DATE datum, PRICE preis, open, high, low,
+        lag(high) over (partition by symbol order by price_date) high_vortag,
+        lag(low) over (partition by symbol order by price_date) low_vortag,
+        market_cap, span_a, span_b
+  from STOCK_PRICES
+;
+
+create or replace view vw_kaufen as
+with ytd as (
+  select p1.symbol, p1.datum, p1.preis, p1.open, p1.high, p1.high_vortag, p1.low, p1.low_vortag,
+         p1.market_cap, (p1.preis / p2.preis - 1) * 100 as ytd, p1.span_a, p1.span_b
+    from tmp_prices p1
     join SILVESTER s on s.jahr = extract(year from p1.datum) - 1
-    join prices p2 on p2.symbol = p1.symbol
+    join tmp_prices p2 on p2.symbol = p1.symbol
                   and p2.datum = s.last_trading_day
    where p1.market_cap > 50000000000
 ),
@@ -178,33 +180,37 @@ ranked as (
     from ytd
 ),
 top_shares as (
-  select symbol, datum, preis, high, high_vortag, low, low_vortag, market_cap, ytd, span_a, span_b
+  select symbol, datum, preis, open, high, high_vortag, low, low_vortag, market_cap, ytd, span_a, span_b
     from ranked
    where rn <= 50
 ),
 kaufen as (
   select symbol, datum, preis, market_cap, 'K' signal, span_a, span_b
     from top_shares
-  where high > greatest(span_a, span_b) and high_vortag <= greatest(span_a, span_b)
-),
-verkaufen as (
+  where high > greatest(span_a, span_b) and least(low, low_vortag) < greatest(span_a, span_b) and preis > open-- and high > high_vortag
+)
+select * from kaufen
+;
+
+create or replace view vw_signale as
+with verkaufen as (
   select symbol, datum, preis, market_cap, 'V' signal, span_a, span_b
-    from prices
-  where symbol in (select symbol from kaufen)
-    and low < greatest(span_a, span_b) and low_vortag >= greatest(span_a, span_b)
+    from tmp_prices p
+  where symbol in (select symbol from tmp_kaufen k where k.datum < p.datum)
+    and low < greatest(span_a, span_b) and low < low_vortag and preis < open
 ),
 kaufen_verkaufen as (
-  select * from kaufen
+  select * from tmp_kaufen
   union all
   select * from verkaufen
 ),
 streichen as (
-  select symbol, datum, preis, market_cap, signal
+  select symbol, datum, preis, market_cap, signal, rownum zeile
     from (select symbol, datum, preis, market_cap, signal,
                  lag(signal, 1, 'X') over (partition by symbol order by datum) as signal_letztes
             from kaufen_verkaufen)
    where signal <> signal_letztes
 )
-select symbol, datum, preis, market_cap, signal
+select symbol, datum, preis, market_cap, signal, zeile
   from streichen
 ;
