@@ -188,16 +188,12 @@ class StockLoader:
 
         # Vorwärtsversatz: Wert von (T - displacement) erscheint an Position T.
         #
-        # Hinweis: TradingView (Pine Script) zählt Bars ab Index 0 und
-        # projiziert die Werte relativ dazu. Ein reiner positionaler
-        # shift(26) landet dadurch einen Handelstag zu spät gegenüber der
-        # TradingView-Darstellung. Empirisch abgeglichen (siehe AVGO
-        # 06.04.2026) muss der tatsächliche Zeilenversatz daher
-        # (ICHIMOKU_DISPLACEMENT - 1) betragen, um exakt mit TradingView
-        # übereinzustimmen.
-        effective_shift = ICHIMOKU_DISPLACEMENT - 1
-        span_a = raw_span_a.shift(effective_shift)
-        span_b = raw_span_b.shift(effective_shift)
+        # Standarddefinition: Senkou Span A/B wird aus den Daten bis Tag T
+        # berechnet und 26 Perioden in die Zukunft geplottet. D.h. der an
+        # Position T sichtbare Wert stammt aus den Rohdaten von (T - 26).
+        # shift(ICHIMOKU_DISPLACEMENT) bildet das exakt ab.
+        span_a = raw_span_a.shift(ICHIMOKU_DISPLACEMENT)
+        span_b = raw_span_b.shift(ICHIMOKU_DISPLACEMENT)
 
         return span_a, span_b
 
