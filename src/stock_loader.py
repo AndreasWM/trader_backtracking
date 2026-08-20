@@ -14,7 +14,7 @@ from lib.tv_scanner import TV_Scanner
 from lib.stock_util import StockUtil
 
 # ── Verbindungsparameter ────────────────────────────────────────────────────────
-DB_USER     = "TRADER"
+DB_USER     = os.getenv("ORACLE_TRADER_USER")
 DB_PASSWORD = os.getenv("ORACLE_TRADER_PW")
 DB_DSN      = "(description= (retry_count=20)(retry_delay=3)(address=(protocol=tcps)(port=1522)(host=adb.eu-frankfurt-1.oraclecloud.com))(connect_data=(service_name=g0c5cfd076541df_iweaacmgy3oa0pcw_low.adb.oraclecloud.com))(security=(ssl_server_dn_match=yes)))"
 
